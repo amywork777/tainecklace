@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🎙️ TaiNecklace - AI Voice Companion</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 40px 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            text-align: center;
+            min-height: 100vh;
+        }
+        
+        .hero {
+            margin-bottom: 40px;
+        }
+        
+        h1 {
+            font-size: 3em;
+            margin-bottom: 20px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+        }
+        
+        .subtitle {
+            font-size: 1.2em;
+            opacity: 0.9;
+            margin-bottom: 40px;
+        }
+        
+        .launch-button {
+            display: inline-block;
+            padding: 15px 30px;
+            background: rgba(255,255,255,0.2);
+            border: 2px solid rgba(255,255,255,0.3);
+            border-radius: 12px;
+            color: white;
+            text-decoration: none;
+            font-size: 1.1em;
+            font-weight: 600;
+            transition: all 0.3s ease;
+            backdrop-filter: blur(10px);
+        }
+        
+        .launch-button:hover {
+            background: rgba(255,255,255,0.3);
+            border-color: rgba(255,255,255,0.5);
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(0,0,0,0.2);
+        }
+        
+        .features {
+            margin-top: 50px;
+            text-align: left;
+        }
+        
+        .feature {
+            margin: 15px 0;
+            opacity: 0.9;
+        }
+        
+        .badge {
+            display: inline-block;
+            padding: 4px 8px;
+            background: rgba(255,255,255,0.2);
+            border-radius: 6px;
+            font-size: 0.9em;
+            margin-top: 20px;
+            margin-right: 10px;
+        }
+        
+        .github-link {
+            margin-top: 30px;
+        }
+        
+        .github-link a {
+            color: rgba(255,255,255,0.8);
+            text-decoration: none;
+        }
+        
+        .github-link a:hover {
+            color: white;
+        }
+    </style>
+</head>
+<body>
+    <div class="hero">
+        <h1>🎙️ TaiNecklace</h1>
+        <div class="subtitle">AI Voice Companion for XIAO BLE Devices</div>
+        
+        <a href="./tainecklace-demo.html" class="launch-button">
+            🚀 Launch TaiNecklace App
+        </a>
+        
+        <div class="features">
+            <div class="feature">📡 Direct Web Bluetooth connection to XIAO devices</div>
+            <div class="feature">🎤 Real-time ADPCM audio recording and visualization</div>
+            <div class="feature">🔄 High-quality transcription using AssemblyAI</div>
+            <div class="feature">💾 Conversation storage with browser persistence</div>
+            <div class="feature">🎯 No installation required - runs in your browser</div>
+        </div>
+        
+        <div>
+            <span class="badge">Web Bluetooth</span>
+            <span class="badge">AssemblyAI</span>
+            <span class="badge">XIAO Compatible</span>
+        </div>
+        
+        <div class="github-link">
+            <a href="https://github.com/amywork777/tainecklace" target="_blank">
+                📂 View on GitHub
+            </a>
+        </div>
+    </div>
+</body>
+</html>
