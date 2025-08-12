@@ -426,9 +426,33 @@
         }
 
         async function connectToXIAO() {
+            // Check for mobile devices
+            const isMobile = /Android|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+            
             if (!navigator.bluetooth) {
-                alert('Web Bluetooth not supported. Please use Chrome or Edge browser.');
+                if (isMobile) {
+                    alert(`📱 Mobile Web Bluetooth Support Limited
+                    
+✅ Try: Android Chrome with experimental flags enabled
+❌ iOS: Web Bluetooth not supported on any iOS browser
+🔧 Alternative: We're working on a native mobile app!
+
+For now, please use desktop Chrome or Edge browser.`);
+                } else {
+                    alert('Web Bluetooth not supported. Please use Chrome 56+ or Edge 79+ browser.');
+                }
                 return;
+            }
+            
+            if (isMobile) {
+                const proceed = confirm(`📱 Mobile Detected: Web Bluetooth support varies on mobile browsers.
+
+✅ May work on: Android Chrome (with flags enabled)  
+❌ Won't work on: iOS (any browser), most mobile browsers
+
+Continue anyway?`);
+                
+                if (!proceed) return;
             }
 
             // API key not required for BLE connection - only for transcription later
