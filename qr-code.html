@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>TaiNecklace Expo QR Code</title>
+    <script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background: #1a1a1a;
+            color: white;
+            padding: 20px;
+            text-align: center;
+        }
+        .container {
+            max-width: 500px;
+            margin: 0 auto;
+            background: #2d2d2d;
+            padding: 30px;
+            border-radius: 10px;
+            border: 1px solid #444;
+        }
+        h1 {
+            margin-bottom: 20px;
+        }
+        .qr-container {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            margin: 20px 0;
+            display: inline-block;
+        }
+        .instructions {
+            text-align: left;
+            background: #1a1a1a;
+            padding: 15px;
+            border-radius: 5px;
+            margin: 20px 0;
+        }
+        .url {
+            background: #1a1a1a;
+            padding: 10px;
+            border-radius: 5px;
+            font-family: monospace;
+            font-size: 12px;
+            word-break: break-all;
+            margin: 10px 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎙️ TaiNecklace Mobile Demo</h1>
+        
+        <div class="instructions">
+            <strong>📱 Steps to test on your phone:</strong>
+            <ol>
+                <li>Download <strong>"Expo Go"</strong> app from App Store or Google Play</li>
+                <li>Open Expo Go app on your phone</li>
+                <li>Tap <strong>"Scan QR Code"</strong></li>
+                <li>Scan this QR code:</li>
+            </ol>
+        </div>
+
+        <div class="qr-container">
+            <div id="qrcode"></div>
+        </div>
+
+        <div class="instructions">
+            <strong>🔗 Expo URL:</strong>
+            <div class="url" id="expoUrl"></div>
+            
+            <strong>⚠️ Important:</strong><br>
+            • Make sure your phone is on the same WiFi network<br>
+            • If QR code doesn't work, copy the URL and paste in Expo Go app<br>
+            • Make sure Metro bundler is running at localhost:8081
+        </div>
+
+        <div class="instructions">
+            <strong>🧪 What you can test:</strong><br>
+            ✅ ADPCM audio decoder<br>
+            ✅ AssemblyAI transcription (add your API key)<br>
+            ✅ Local storage persistence<br>
+            ✅ Mobile UI and navigation<br>
+            ❌ BLE functionality (requires production build)
+        </div>
+    </div>
+
+    <script>
+        // Generate QR code for Expo URL
+        const localIP = '10.130.80.131';
+        const port = '8081';
+        const expoUrl = `exp://${localIP}:${port}`;
+        
+        // Display the URL
+        document.getElementById('expoUrl').textContent = expoUrl;
+        
+        // Generate QR code
+        const qr = qrcode(0, 'L');
+        qr.addData(expoUrl);
+        qr.make();
+        
+        // Create QR code element
+        const qrElement = qr.createImgElement(8);
+        qrElement.style.width = '250px';
+        qrElement.style.height = '250px';
+        document.getElementById('qrcode').appendChild(qrElement);
+    </script>
+</body>
+</html>
