@@ -1,7 +1,7 @@
 {
   "name": "tainecklaceexpo",
   "version": "1.0.0",
-  "main": "App.tsx",
+  "main": "App-Debug.tsx",
   "scripts": {
     "start": "expo start",
     "android": "expo start --android",
@@ -17,7 +17,8 @@
     "react-native-ble-plx": "^3.5.0",
     "react-dom": "19.0.0",
     "react-native-web": "^0.20.0",
-    "@expo/metro-runtime": "~5.0.4"
+    "@expo/metro-runtime": "~5.0.4",
+    "expo-dev-client": "~5.2.4"
   },
   "devDependencies": {
     "@babel/core": "^7.25.2",
