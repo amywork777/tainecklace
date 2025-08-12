@@ -45,36 +45,34 @@ export default function App() {
 
   const initializeApp = async () => {
     try {
+      console.log('🔄 Starting app initialization...');
+      
       // Load saved API key
-      const savedKey = await AsyncStorage.getItem('assemblyai_key');
-      if (savedKey) {
-        setApiKey(savedKey);
-        transcriptionService.current = new TranscriptionService(savedKey);
+      try {
+        const savedKey = await AsyncStorage.getItem('assemblyai_key');
+        if (savedKey) {
+          setApiKey(savedKey);
+          transcriptionService.current = new TranscriptionService(savedKey);
+        }
+      } catch (error) {
+        console.log('⚠️ Could not load saved API key:', error.message);
       }
 
       // Load saved transcriptions
-      const savedTranscriptions = await AsyncStorage.getItem('transcriptions');
-      if (savedTranscriptions) {
-        setTranscriptions(JSON.parse(savedTranscriptions));
+      try {
+        const savedTranscriptions = await AsyncStorage.getItem('transcriptions');
+        if (savedTranscriptions) {
+          setTranscriptions(JSON.parse(savedTranscriptions));
+        }
+      } catch (error) {
+        console.log('⚠️ Could not load saved transcriptions:', error.message);
       }
 
-      // Request permissions
-      await requestPermissions();
-      
-      // Initialize BLE Manager
-      bleManager.current = new XiaoBLEManager();
-      await bleManager.current.initialize();
-      
-      // Set up callbacks
-      bleManager.current.setCallbacks({
-        onAudioData: handleAudioData,
-        onDisconnected: handleDisconnection,
-      });
-
       setStatus('Ready to connect');
+      console.log('✅ App initialization complete');
     } catch (error) {
-      console.error('Initialization error:', error);
-      setStatus(`Error: ${error.message}`);
+      console.error('❌ Initialization error:', error);
+      setStatus('Ready to connect'); // Still allow manual connection attempt
     }
   };
 
@@ -99,8 +97,24 @@ export default function App() {
 
   const handleConnectXIAO = async () => {
     try {
-      setStatus('Scanning for XIAO...');
+      setStatus('Initializing Bluetooth...');
       
+      // Request permissions first
+      await requestPermissions();
+      
+      // Initialize BLE Manager if not already done
+      if (!bleManager.current) {
+        bleManager.current = new XiaoBLEManager();
+        await bleManager.current.initialize();
+        
+        // Set up callbacks
+        bleManager.current.setCallbacks({
+          onAudioData: handleAudioData,
+          onDisconnected: handleDisconnection,
+        });
+      }
+      
+      setStatus('Scanning for XIAO...');
       const device = await bleManager.current.scanForXIAO(10000);
       
       setStatus('Connecting...');
