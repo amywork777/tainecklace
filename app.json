@@ -1,7 +1,7 @@
 {
   "expo": {
     "name": "TaiNecklaceExpo",
-    "slug": "TaiNecklaceExpo",
+    "slug": "TaiNecklaceExpo", 
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -19,7 +19,6 @@
         "NSBluetoothPeripheralUsageDescription": "This app uses Bluetooth to connect to XIAO audio streaming device",
         "NSLocationWhenInUseUsageDescription": "This app needs location access to scan for nearby Bluetooth devices",
         "UIBackgroundModes": [
-          "bluetooth-central",
           "bluetooth-central"
         ],
         "ITSAppUsesNonExemptEncryption": false
