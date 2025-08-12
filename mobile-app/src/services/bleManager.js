@@ -1,277 +1,249 @@
-// BLE import - only works on mobile
-let BleManager, Device;
-if (typeof navigator !== 'undefined' && navigator.product !== 'ReactNative') {
-  // Web environment - mock BLE
-  BleManager = class MockBleManager {
-    async state() { return 'Unsupported'; }
-    startDeviceScan() { return null; }
-    stopDeviceScan() {}
-    destroy() {}
-  };
-  Device = class MockDevice {};
-} else {
-  // React Native environment
-  try {
-    const ble = require('react-native-ble-plx');
-    BleManager = ble.BleManager;
-    Device = ble.Device;
-  } catch (e) {
-    // Fallback for web
-    BleManager = class MockBleManager {
-      async state() { return 'Unsupported'; }
-      startDeviceScan() { return null; }
-      stopDeviceScan() {}
-      destroy() {}
-    };
-    Device = class MockDevice {};
-  }
-}
-import { FrameBuffer } from './frameBuffer';
-import { ADPCMDecoder } from './adpcm';
-import { EventEmitter } from 'events';
+/**
+ * BLE Manager for XIAO Device Connection
+ * Handles Nordic UART Service (NUS) communication
+ */
+import { BleManager } from 'react-native-ble-plx';
+import { ADPCMDecoder } from './ADPCMDecoder';
 
-const NUS_SERVICE_UUID = "6E400001-B5A3-F393-E0A9-E50E24DCCA9E";
-const NUS_CHAR_TX = "6E400003-B5A3-F393-E0A9-E50E24DCCA9E";
-const XIAO_ADDRESS = "4946229F-BE14-34B7-1703-3F9292D6BA00";
-const SAMPLE_RATE = 16000;
-
-export class BLEAudioManager extends EventEmitter {
+export class XiaoBLEManager {
   constructor() {
-    super();
     this.manager = new BleManager();
     this.device = null;
-    this.frameBuffer = new FrameBuffer();
-    this.adpcmDecoder = new ADPCMDecoder();
     this.isConnected = false;
-    this.isRecording = false;
-    this.audioBuffer = [];
-    this.stats = { totalSamples: 0, droppedFrames: 0 };
+    this.adpcmDecoder = new ADPCMDecoder();
+    this.frameBuffer = new Map();
+    this.callbacks = {};
+    this.stats = {
+      packetsReceived: 0,
+      framesProcessed: 0,
+      audioSamplesGenerated: 0
+    };
+    
+    // XIAO BLE Service UUIDs (Nordic UART Service)
+    this.NUS_SERVICE_UUID = '6e400001-b5a3-f393-e0a9-e50e24dcca9e';
+    this.NUS_TX_CHAR_UUID = '6e400003-b5a3-f393-e0a9-e50e24dcca9e'; // XIAO transmits to us
+    this.NUS_RX_CHAR_UUID = '6e400002-b5a3-f393-e0a9-e50e24dcca9e'; // We transmit to XIAO
   }
 
   async initialize() {
+    console.log('🔄 Initializing BLE Manager...');
+    
+    // Check if Bluetooth is enabled
     const state = await this.manager.state();
     if (state !== 'PoweredOn') {
-      throw new Error(`Bluetooth is not powered on. State: ${state}`);
+      throw new Error(`Bluetooth not ready. Current state: ${state}`);
     }
     
-    this.emit('initialized');
-    console.log('BLE Manager initialized');
+    console.log('✅ BLE Manager initialized');
+    return true;
   }
 
-  async connect(deviceAddress = XIAO_ADDRESS) {
-    try {
-      this.emit('status', { message: 'Scanning for device...', type: 'info' });
-      
-      // Scan for device
-      const subscription = this.manager.startDeviceScan(null, null, (error, device) => {
+  async scanForXIAO(timeoutMs = 10000) {
+    console.log('🔍 Scanning for XIAO devices...');
+    
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        this.manager.stopDeviceScan();
+        reject(new Error('XIAO device not found within timeout'));
+      }, timeoutMs);
+
+      this.manager.startDeviceScan([this.NUS_SERVICE_UUID], null, (error, device) => {
         if (error) {
-          console.error('Scan error:', error);
+          clearTimeout(timeout);
+          this.manager.stopDeviceScan();
+          reject(error);
           return;
         }
 
-        if (device.id === deviceAddress || device.name === 'XIAO-ADPCM') {
+        if (device && device.name && device.name.toLowerCase().includes('xiao')) {
+          clearTimeout(timeout);
           this.manager.stopDeviceScan();
-          this.connectToDevice(device);
+          console.log(`✅ Found XIAO device: ${device.name} (${device.id})`);
+          resolve(device);
         }
       });
+    });
+  }
 
-      // Stop scanning after 10 seconds if device not found
-      setTimeout(() => {
-        this.manager.stopDeviceScan();
-        if (!this.isConnected) {
-          this.emit('error', new Error('Device not found within timeout'));
+  async connectToDevice(deviceId) {
+    console.log(`🔌 Connecting to device: ${deviceId}`);
+    
+    try {
+      this.device = await this.manager.connectToDevice(deviceId);
+      console.log('✅ Connected to device');
+      
+      await this.device.discoverAllServicesAndCharacteristics();
+      console.log('✅ Services and characteristics discovered');
+      
+      this.isConnected = true;
+      
+      // Set up disconnect handler
+      this.device.onDisconnected(() => {
+        console.log('📱 Device disconnected');
+        this.isConnected = false;
+        if (this.callbacks.onDisconnected) {
+          this.callbacks.onDisconnected();
         }
-      }, 10000);
-
+      });
+      
+      return true;
     } catch (error) {
-      this.emit('error', error);
+      console.error('❌ Connection failed:', error);
       throw error;
     }
   }
 
-  async connectToDevice(device) {
+  async startAudioStreaming() {
+    if (!this.isConnected || !this.device) {
+      throw new Error('Device not connected');
+    }
+
+    console.log('🎤 Starting audio streaming...');
+    
     try {
-      this.emit('status', { message: 'Connecting to device...', type: 'info' });
-      
-      this.device = await device.connect();
-      await this.device.discoverAllServicesAndCharacteristics();
-      
-      // Subscribe to notifications
-      await this.device.monitorCharacteristicForService(
-        NUS_SERVICE_UUID,
-        NUS_CHAR_TX,
+      // Start listening for audio data on TX characteristic
+      this.device.monitorCharacteristicForService(
+        this.NUS_SERVICE_UUID,
+        this.NUS_TX_CHAR_UUID,
         (error, characteristic) => {
           if (error) {
-            console.error('Notification error:', error);
-            this.emit('error', error);
+            console.error('❌ Monitor error:', error);
             return;
           }
           
-          this.handleNotification(characteristic.value);
+          if (characteristic?.value) {
+            this.handleAudioData(characteristic.value);
+          }
         }
       );
-
-      this.isConnected = true;
-      this.emit('connected', device.name || device.id);
-      console.log(`Connected to ${device.name || device.id}`);
       
+      console.log('✅ Audio streaming started');
+      return true;
     } catch (error) {
-      this.emit('error', error);
+      console.error('❌ Failed to start audio streaming:', error);
       throw error;
     }
   }
 
-  handleNotification(base64Data) {
+  handleAudioData(base64Data) {
     try {
-      // Convert base64 to Uint8Array
-      const data = new Uint8Array(
-        atob(base64Data)
-          .split('')
-          .map(char => char.charCodeAt(0))
-      );
-
-      const parsed = this.parseNotification(data);
-      if (!parsed) return;
-
-      this.frameBuffer.addFragment(
-        parsed.seq,
-        parsed.fragId,
-        parsed.format,
-        parsed.totalLen,
-        parsed.payload
-      );
-
-      // Process completed frames
-      this.processCompletedFrames();
-
-      // Emit stats periodically
-      if (this.frameBuffer.stats.notifications % 100 === 0) {
-        this.emit('stats', this.frameBuffer.getStats());
+      // Convert base64 to byte array
+      const data = this.base64ToBytes(base64Data);
+      this.stats.packetsReceived++;
+      
+      // Debug log for first few packets
+      if (this.stats.packetsReceived <= 5) {
+        console.log(`📦 Packet ${this.stats.packetsReceived}:`, 
+          Array.from(data.slice(0, 10)).map(b => '0x' + b.toString(16).padStart(2, '0')).join(' '));
       }
-
+      
+      // Check for XIAO packet format: 0xAA 0x55 header
+      if (data.length >= 4 && data[0] === 0xAA && data[1] === 0x55) {
+        this.handleFragmentedPacket(data);
+      } else {
+        // Direct ADPCM data
+        this.processAudioData(data);
+      }
+      
     } catch (error) {
-      console.error('Notification handling error:', error);
+      console.error('❌ Audio data processing error:', error);
     }
   }
 
-  parseNotification(data) {
-    if (data.length < 5) return null;
-    if (data[0] !== 0xAA || data[1] !== 0x55) return null;
-
-    const seqLo = data[2];
-    const seqHi = data[3];
-    const fragId = data[4];
-    const seq = seqLo | (seqHi << 8);
-
-    let formatChar = null;
-    let totalLen = null;
-    let payload;
-
-    if (fragId === 0) {
-      if (data.length < 8) return null;
-      formatChar = String.fromCharCode(data[5]);
-      totalLen = data[6] | (data[7] << 8);
-      payload = data.slice(8);
-    } else {
-      payload = data.slice(5);
+  handleFragmentedPacket(data) {
+    const seqNum = data[2];
+    const fragId = data[3];
+    const audioData = data.slice(4);
+    
+    if (this.stats.packetsReceived <= 5) {
+      console.log(`📦 Fragment: seq=${seqNum}, frag=${fragId}, len=${audioData.length}`);
     }
-
-    return {
-      seq,
-      fragId,
-      format: formatChar,
-      totalLen,
-      payload
-    };
+    
+    // Store fragment
+    const frameKey = `${seqNum}`;
+    if (!this.frameBuffer.has(frameKey)) {
+      this.frameBuffer.set(frameKey, new Map());
+    }
+    
+    const fragments = this.frameBuffer.get(frameKey);
+    fragments.set(fragId, audioData);
+    
+    // Complete frame immediately for single fragments (fragId=59 pattern from web app)
+    const isComplete = fragId === 255 || fragId === 59 || fragments.size === 1;
+    
+    if (isComplete) {
+      this.reassembleAndDecodeFrame(frameKey, fragments);
+      this.frameBuffer.delete(frameKey);
+      this.stats.framesProcessed++;
+    }
   }
 
-  processCompletedFrames() {
-    const completedFrames = this.frameBuffer.getCompletedFrames();
-    this.frameBuffer.clearCompleted();
+  reassembleAndDecodeFrame(frameKey, fragments) {
+    // Reassemble fragments in order
+    const sortedFragments = Array.from(fragments.entries()).sort((a, b) => a[0] - b[0]);
+    let completeFrame = [];
+    
+    for (const [fragId, data] of sortedFragments) {
+      completeFrame.push(...data);
+    }
+    
+    // Convert to Uint8Array for ADPCM decoder
+    const audioData = new Uint8Array(completeFrame);
+    this.processAudioData(audioData);
+  }
 
-    for (const frame of completedFrames) {
-      if (frame.format === 'I') { // ADPCM format
-        try {
-          const pcmSamples = this.adpcmDecoder.decodeBlock(frame.data);
-          this.audioBuffer.push(...pcmSamples);
-          this.stats.totalSamples += pcmSamples.length;
-
-          // Emit audio chunk when we have enough samples (100ms = 1600 samples at 16kHz)
-          if (this.audioBuffer.length >= 1600) {
-            const chunk = this.audioBuffer.splice(0, 1600);
-            this.emit('audioChunk', {
-              samples: chunk,
-              sampleRate: SAMPLE_RATE,
-              timestamp: Date.now()
-            });
-          }
-        } catch (error) {
-          console.error('ADPCM decode error:', error);
-          this.stats.droppedFrames++;
-        }
+  processAudioData(audioData) {
+    try {
+      // Decode ADPCM to PCM
+      const pcmSamples = this.adpcmDecoder.decodeBlock(audioData);
+      this.stats.audioSamplesGenerated += pcmSamples.length;
+      
+      if (this.stats.framesProcessed <= 3) {
+        console.log(`🎵 Decoded ${audioData.length} ADPCM bytes → ${pcmSamples.length} PCM samples`);
       }
+      
+      // Send to callback for processing
+      if (this.callbacks.onAudioData && pcmSamples.length > 0) {
+        this.callbacks.onAudioData(pcmSamples);
+      }
+      
+    } catch (error) {
+      console.error('❌ ADPCM decode error:', error);
     }
-  }
-
-  startRecording() {
-    if (!this.isConnected) {
-      throw new Error('Device not connected');
-    }
-    
-    this.isRecording = true;
-    this.frameBuffer = new FrameBuffer(); // Reset buffer
-    this.adpcmDecoder.reset();
-    this.audioBuffer = [];
-    this.stats = { totalSamples: 0, droppedFrames: 0 };
-    
-    this.emit('recordingStarted');
-    console.log('Recording started');
-  }
-
-  stopRecording() {
-    this.isRecording = false;
-    
-    // Process any remaining audio
-    if (this.audioBuffer.length > 0) {
-      this.emit('audioChunk', {
-        samples: [...this.audioBuffer],
-        sampleRate: SAMPLE_RATE,
-        timestamp: Date.now()
-      });
-      this.audioBuffer = [];
-    }
-    
-    this.frameBuffer.finalizeStats();
-    this.emit('recordingStopped', {
-      stats: this.frameBuffer.getStats(),
-      audioStats: this.stats
-    });
-    
-    console.log('Recording stopped');
   }
 
   async disconnect() {
     if (this.device) {
       try {
         await this.device.cancelConnection();
+        console.log('✅ Device disconnected');
       } catch (error) {
-        console.error('Disconnect error:', error);
+        console.error('❌ Disconnect error:', error);
       }
     }
     
     this.device = null;
     this.isConnected = false;
-    this.isRecording = false;
-    this.emit('disconnected');
-    console.log('Disconnected');
+    this.adpcmDecoder.reset();
+    this.frameBuffer.clear();
   }
 
-  getConnectionState() {
-    return {
-      connected: this.isConnected,
-      recording: this.isRecording,
-      deviceId: this.device?.id || null
-    };
+  setCallbacks(callbacks) {
+    this.callbacks = { ...callbacks };
+  }
+
+  getStats() {
+    return { ...this.stats };
+  }
+
+  // Utility function to convert base64 to bytes
+  base64ToBytes(base64) {
+    const binaryString = atob(base64);
+    const bytes = new Uint8Array(binaryString.length);
+    for (let i = 0; i < binaryString.length; i++) {
+      bytes[i] = binaryString.charCodeAt(i);
+    }
+    return bytes;
   }
 
   destroy() {
