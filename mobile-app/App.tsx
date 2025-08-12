@@ -14,7 +14,7 @@ import {
   SafeAreaView,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { XiaoBLEManager } from './src/services/BLEManager';
+import { XiaoBLEManager } from './src/services/bleManager';
 import { TranscriptionService } from './src/services/TranscriptionService';
 
 const ASSEMBLYAI_KEY = 'your-assemblyai-api-key-here';
