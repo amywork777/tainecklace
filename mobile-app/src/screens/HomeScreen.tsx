@@ -12,18 +12,17 @@ import {
   ActivityIndicator,
   StatusBar,
   SafeAreaView,
-  Modal,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { XiaoBLEManager } from './src/services/bleManager';
-import { TranscriptionService } from './src/services/TranscriptionService';
-import { BackgroundTaskManager } from './src/services/BackgroundTaskManager';
-import { HybridStorageService } from './src/services/HybridStorageService';
-import { AISummaryService } from './src/services/AISummaryService';
+import { XiaoBLEManager } from '../services/bleManager';
+import { TranscriptionService } from '../services/TranscriptionService';
+import { BackgroundTaskManager } from '../services/BackgroundTaskManager';
+import { HybridStorageService } from '../services/HybridStorageService';
+import { AISummaryService } from '../services/AISummaryService';
 
 const ASSEMBLYAI_KEY = 'your-assemblyai-api-key-here';
 
-export default function App() {
+export default function HomeScreen({ navigation }) {
   const [isConnected, setIsConnected] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
   const [isDisconnecting, setIsDisconnecting] = useState(false);
@@ -46,8 +45,6 @@ export default function App() {
   const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
   const [lastSummary, setLastSummary] = useState(null);
   const [showSummarySection, setShowSummarySection] = useState(false);
-  const [selectedTranscription, setSelectedTranscription] = useState(null);
-  const [showDetailModal, setShowDetailModal] = useState(false);
 
   const bleManager = useRef(null);
   const transcriptionService = useRef(null);
@@ -507,26 +504,8 @@ export default function App() {
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
 
-  const openTranscriptionDetail = (transcription) => {
-    setSelectedTranscription(transcription);
-    setShowDetailModal(true);
-  };
-
-  const formatTimestamp = (timestamp) => {
-    const date = new Date(timestamp);
-    return {
-      date: date.toLocaleDateString('en-US', { 
-        weekday: 'long', 
-        year: 'numeric', 
-        month: 'long', 
-        day: 'numeric' 
-      }),
-      time: date.toLocaleTimeString('en-US', { 
-        hour: '2-digit', 
-        minute: '2-digit',
-        second: '2-digit'
-      })
-    };
+  const navigateToTranscription = (transcription) => {
+    navigation.navigate('TranscriptionDetail', { transcription });
   };
 
   return (
@@ -740,7 +719,7 @@ export default function App() {
                 <TouchableOpacity 
                   key={item.id || `transcription-${index}`} 
                   style={styles.historyItem}
-                  onPress={() => openTranscriptionDetail(item)}
+                  onPress={() => navigateToTranscription(item)}
                   activeOpacity={0.7}
                 >
                   <View style={styles.historyHeader}>
@@ -785,113 +764,6 @@ export default function App() {
           )}
         </View>
       </ScrollView>
-
-      {/* Detail Modal */}
-      <Modal
-        visible={showDetailModal}
-        animationType="slide"
-        presentationStyle="pageSheet"
-        onRequestClose={() => setShowDetailModal(false)}
-      >
-        {selectedTranscription && (
-          <SafeAreaView style={styles.modalContainer}>
-            {/* Modal Header */}
-            <View style={styles.modalHeader}>
-              <TouchableOpacity 
-                style={styles.backButton} 
-                onPress={() => setShowDetailModal(false)}
-              >
-                <Text style={styles.backButtonText}>← Back</Text>
-              </TouchableOpacity>
-              <Text style={styles.modalTitle}>Transcription Details</Text>
-              <View style={styles.placeholder} />
-            </View>
-
-            <ScrollView style={styles.modalContent}>
-              {/* Timestamp Section */}
-              {selectedTranscription.timestamp && (
-                <View style={styles.section}>
-                  <Text style={styles.sectionTitle}>📅 Recording Details</Text>
-                  <View style={styles.timestampContainer}>
-                    <Text style={styles.dateText}>
-                      {formatTimestamp(selectedTranscription.timestamp).date}
-                    </Text>
-                    <Text style={styles.timeText}>
-                      {formatTimestamp(selectedTranscription.timestamp).time}
-                    </Text>
-                  </View>
-                </View>
-              )}
-
-              {/* AI Summary Section */}
-              {selectedTranscription.aiSummary && (
-                <View style={styles.section}>
-                  <Text style={styles.sectionTitle}>🤖 AI Summary</Text>
-                  <View style={styles.aiSummaryBox}>
-                    <Text style={styles.aiSummaryText}>{selectedTranscription.aiSummary}</Text>
-                    {selectedTranscription.aiSummaryMeta && (
-                      <View style={styles.aiSummaryMeta}>
-                        <Text style={styles.aiMetaText}>
-                          Type: {selectedTranscription.aiSummaryMeta.summaryType || 'concise'} | 
-                          Tokens: {selectedTranscription.aiSummaryMeta.tokensUsed || 0}
-                        </Text>
-                      </View>
-                    )}
-                  </View>
-                </View>
-              )}
-
-              {/* Full Transcription Section */}
-              <View style={styles.section}>
-                <Text style={styles.sectionTitle}>📝 Full Transcription</Text>
-                <View style={styles.transcriptionBox}>
-                  <Text style={styles.transcriptionText}>
-                    {selectedTranscription.text || '[No transcription available]'}
-                  </Text>
-                </View>
-                
-                {/* Word count */}
-                <Text style={styles.wordCount}>
-                  {(selectedTranscription.text || '').split(/\s+/).filter(word => word.length > 0).length} words, {(selectedTranscription.text || '').length} characters
-                </Text>
-              </View>
-
-              {/* Technical Details Section */}
-              <View style={styles.section}>
-                <Text style={styles.sectionTitle}>📊 Technical Details</Text>
-                <View style={styles.detailsGrid}>
-                  <View style={styles.detailItem}>
-                    <Text style={styles.detailLabel}>Duration</Text>
-                    <Text style={styles.detailValue}>{formatDuration(selectedTranscription.duration || 0)}</Text>
-                  </View>
-
-                  {selectedTranscription.confidence && (
-                    <View style={styles.detailItem}>
-                      <Text style={styles.detailLabel}>Confidence</Text>
-                      <Text style={[styles.detailValue, { 
-                        color: selectedTranscription.confidence > 0.8 ? '#28a745' : 
-                               selectedTranscription.confidence > 0.6 ? '#ffc107' : '#dc3545' 
-                      }]}>
-                        {(selectedTranscription.confidence * 100).toFixed(1)}%
-                      </Text>
-                    </View>
-                  )}
-
-                  <View style={styles.detailItem}>
-                    <Text style={styles.detailLabel}>Recording ID</Text>
-                    <Text style={styles.detailValue}>{selectedTranscription.id || 'N/A'}</Text>
-                  </View>
-
-                  <View style={styles.detailItem}>
-                    <Text style={styles.detailLabel}>Text Length</Text>
-                    <Text style={styles.detailValue}>{(selectedTranscription.text || '').length}</Text>
-                  </View>
-                </View>
-              </View>
-            </ScrollView>
-          </SafeAreaView>
-        )}
-      </Modal>
     </SafeAreaView>
   );
 }
@@ -1203,98 +1075,5 @@ const styles = StyleSheet.create({
     fontStyle: 'italic',
     textAlign: 'center',
     marginTop: 4,
-  },
-  // Modal styles
-  modalContainer: {
-    flex: 1,
-    backgroundColor: '#1a1a1a',
-  },
-  modalHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: '#444',
-    backgroundColor: '#2d2d2d',
-  },
-  backButton: {
-    padding: 8,
-  },
-  backButtonText: {
-    color: '#007bff',
-    fontSize: 16,
-    fontWeight: 'bold',
-  },
-  modalTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#ffffff',
-  },
-  placeholder: {
-    width: 40,
-  },
-  modalContent: {
-    flex: 1,
-    padding: 16,
-  },
-  timestampContainer: {
-    alignItems: 'center',
-  },
-  dateText: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#ffffff',
-    marginBottom: 4,
-  },
-  timeText: {
-    fontSize: 14,
-    color: '#888',
-  },
-  aiSummaryBox: {
-    backgroundColor: '#2a4d3a',
-    borderRadius: 4,
-    padding: 12,
-    borderLeftWidth: 4,
-    borderLeftColor: '#28a745',
-  },
-  aiSummaryMeta: {
-    borderTopWidth: 1,
-    borderTopColor: '#357a42',
-    paddingTop: 8,
-  },
-  aiMetaText: {
-    color: '#a8d5aa',
-    fontSize: 12,
-    fontStyle: 'italic',
-  },
-  wordCount: {
-    color: '#888',
-    fontSize: 12,
-    textAlign: 'right',
-    fontStyle: 'italic',
-  },
-  detailsGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    justifyContent: 'space-between',
-  },
-  detailItem: {
-    width: '48%',
-    backgroundColor: '#333',
-    borderRadius: 4,
-    padding: 12,
-    marginBottom: 8,
-  },
-  detailLabel: {
-    color: '#aaa',
-    fontSize: 12,
-    marginBottom: 4,
-  },
-  detailValue: {
-    color: '#ffffff',
-    fontSize: 14,
-    fontWeight: 'bold',
   },
 });
