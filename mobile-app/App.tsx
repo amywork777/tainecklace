@@ -13,6 +13,11 @@ import {
   StatusBar,
   SafeAreaView,
   Modal,
+  Animated,
+  LayoutAnimation,
+  UIManager,
+  KeyboardAvoidingView,
+  Keyboard,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { XiaoBLEManager } from './src/services/bleManager';
@@ -20,6 +25,7 @@ import { TranscriptionService } from './src/services/TranscriptionService';
 import { BackgroundTaskManager } from './src/services/BackgroundTaskManager';
 import { HybridStorageService } from './src/services/HybridStorageService';
 import { AISummaryService } from './src/services/AISummaryService';
+import { AIChatService } from './src/services/AIChatService';
 
 const ASSEMBLYAI_KEY = 'your-assemblyai-api-key-here';
 
@@ -48,6 +54,20 @@ export default function App() {
   const [showSummarySection, setShowSummarySection] = useState(false);
   const [selectedTranscription, setSelectedTranscription] = useState(null);
   const [showDetailModal, setShowDetailModal] = useState(false);
+  const [chatHistory, setChatHistory] = useState([]);
+  const [chatMessage, setChatMessage] = useState('');
+  const [isChatLoading, setIsChatLoading] = useState(false);
+  const [showChatSection, setShowChatSection] = useState(false);
+  const chatAnimationValue = useRef(new Animated.Value(0)).current;
+  const messageAnimations = useRef(new Map()).current;
+  const chatScrollViewRef = useRef(null);
+  const [isTyping, setIsTyping] = useState(false);
+  const typingDot1 = useRef(new Animated.Value(0)).current;
+  const typingDot2 = useRef(new Animated.Value(0)).current;
+  const typingDot3 = useRef(new Animated.Value(0)).current;
+  const [inputFocused, setInputFocused] = useState(false);
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
+  const chatInputRef = useRef(null);
 
   const bleManager = useRef(null);
   const transcriptionService = useRef(null);
@@ -58,10 +78,32 @@ export default function App() {
   const backgroundTaskManager = useRef(null);
   const hybridStorage = useRef(null);
   const aiSummaryService = useRef(null);
+  const aiChatService = useRef(null);
 
   useEffect(() => {
     initializeApp();
-    return cleanup;
+    
+    // Enable LayoutAnimation on Android
+    if (Platform.OS === 'android') {
+      if (UIManager.setLayoutAnimationEnabledExperimental) {
+        UIManager.setLayoutAnimationEnabledExperimental(true);
+      }
+    }
+    
+    // Keyboard listeners
+    const keyboardDidShowListener = Keyboard.addListener('keyboardDidShow', (e) => {
+      setKeyboardHeight(e.endCoordinates.height);
+      setTimeout(() => scrollToBottom(), 100);
+    });
+    const keyboardDidHideListener = Keyboard.addListener('keyboardDidHide', () => {
+      setKeyboardHeight(0);
+    });
+    
+    return () => {
+      keyboardDidShowListener?.remove();
+      keyboardDidHideListener?.remove();
+      cleanup();
+    };
   }, []);
 
   const initializeApp = async () => {
@@ -84,6 +126,9 @@ export default function App() {
       
       // Initialize AI summary service
       aiSummaryService.current = new AISummaryService();
+      
+      // Initialize AI chat service
+      aiChatService.current = new AIChatService();
       
       // Load saved OpenAI key
       try {
@@ -507,9 +552,141 @@ export default function App() {
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
 
-  const openTranscriptionDetail = (transcription) => {
+  const openTranscriptionDetail = async (transcription) => {
     setSelectedTranscription(transcription);
     setShowDetailModal(true);
+    setShowChatSection(false);
+    setChatMessage('');
+    chatAnimationValue.setValue(0);
+    
+    // Load existing chat history
+    if (aiChatService.current && transcription.id) {
+      try {
+        const history = await aiChatService.current.getChatHistory(transcription.id);
+        setChatHistory(history);
+      } catch (error) {
+        console.error('❌ Error loading chat history:', error);
+        setChatHistory([]);
+      }
+    } else {
+      setChatHistory([]);
+    }
+  };
+
+  const scrollToBottom = () => {
+    setTimeout(() => {
+      if (chatScrollViewRef.current) {
+        chatScrollViewRef.current.scrollToEnd({ animated: true });
+      }
+    }, 100);
+  };
+
+  const startTypingAnimation = () => {
+    const animateDot = (dot, delay) => {
+      return Animated.loop(
+        Animated.sequence([
+          Animated.delay(delay),
+          Animated.timing(dot, {
+            toValue: 1,
+            duration: 400,
+            useNativeDriver: true,
+          }),
+          Animated.timing(dot, {
+            toValue: 0,
+            duration: 400,
+            useNativeDriver: true,
+          }),
+        ])
+      );
+    };
+
+    Animated.parallel([
+      animateDot(typingDot1, 0),
+      animateDot(typingDot2, 200),
+      animateDot(typingDot3, 400),
+    ]).start();
+  };
+
+  const stopTypingAnimation = () => {
+    typingDot1.stopAnimation(() => typingDot1.setValue(0));
+    typingDot2.stopAnimation(() => typingDot2.setValue(0));
+    typingDot3.stopAnimation(() => typingDot3.setValue(0));
+  };
+
+  useEffect(() => {
+    if (isTyping) {
+      startTypingAnimation();
+    } else {
+      stopTypingAnimation();
+    }
+  }, [isTyping]);
+
+  const handleSendChatMessage = async () => {
+    if (!chatMessage.trim() || !selectedTranscription || isChatLoading) {
+      return;
+    }
+
+    if (!aiChatService.current || !aiChatService.current.isChatAvailable()) {
+      Alert.alert('Chat Unavailable', 'Please configure your OpenAI API key to use the chat feature.');
+      return;
+    }
+
+    try {
+      setIsChatLoading(true);
+      const messageToSend = chatMessage.trim();
+      setChatMessage(''); // Clear input immediately
+      setIsTyping(true);
+      
+      // Scroll to show user message immediately
+      scrollToBottom();
+
+      const result = await aiChatService.current.chatWithTranscription(
+        selectedTranscription.id,
+        messageToSend,
+        selectedTranscription,
+        chatHistory
+      );
+
+      // Animate new messages
+      LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+      setChatHistory(result.chatHistory);
+      
+      // Auto-scroll to new messages
+      scrollToBottom();
+      
+    } catch (error) {
+      console.error('❌ Chat error:', error);
+      Alert.alert('Chat Error', error.message || 'Failed to send message');
+      // Restore message if there was an error
+      setChatMessage(messageToSend);
+    } finally {
+      setIsChatLoading(false);
+      setIsTyping(false);
+      stopTypingAnimation();
+    }
+  };
+
+  const handleSuggestedQuestion = (question) => {
+    setChatMessage(question);
+    // Focus input after setting question
+    setTimeout(() => {
+      if (chatInputRef.current) {
+        chatInputRef.current.focus();
+      }
+    }, 100);
+  };
+
+  const clearChatHistory = async () => {
+    if (!selectedTranscription) return;
+    
+    try {
+      if (aiChatService.current) {
+        await aiChatService.current.clearChatHistory(selectedTranscription.id);
+      }
+      setChatHistory([]);
+    } catch (error) {
+      console.error('❌ Error clearing chat:', error);
+    }
   };
 
   const formatTimestamp = (timestamp) => {
@@ -854,6 +1031,243 @@ export default function App() {
                 <Text style={styles.wordCount}>
                   {(selectedTranscription.text || '').split(/\s+/).filter(word => word.length > 0).length} words, {(selectedTranscription.text || '').length} characters
                 </Text>
+              </View>
+
+              {/* AI Chat Section */}
+              <View style={styles.section}>
+                <View style={styles.chatHeader}>
+                  <View style={styles.chatTitleContainer}>
+                    <Text style={styles.sectionTitle}>🤖 Chat with Recording</Text>
+                    <Text style={styles.chatSubtitle}>Ask questions about this transcription</Text>
+                  </View>
+                  <TouchableOpacity 
+                    style={[styles.toggleChatButton, showChatSection && styles.toggleChatButtonActive]}
+                    onPress={() => {
+                      LayoutAnimation.configureNext({
+                        duration: 300,
+                        create: {
+                          type: LayoutAnimation.Types.easeInEaseOut,
+                          property: LayoutAnimation.Properties.opacity,
+                        },
+                        update: {
+                          type: LayoutAnimation.Types.easeInEaseOut,
+                        },
+                      });
+                      setShowChatSection(!showChatSection);
+                      
+                      if (!showChatSection) {
+                        Animated.timing(chatAnimationValue, {
+                          toValue: 1,
+                          duration: 300,
+                          useNativeDriver: false,
+                        }).start();
+                      } else {
+                        Animated.timing(chatAnimationValue, {
+                          toValue: 0,
+                          duration: 200,
+                          useNativeDriver: false,
+                        }).start();
+                      }
+                    }}
+                  >
+                    <Text style={styles.toggleChatText}>
+                      {showChatSection ? '🔽 Hide' : '🔼 Chat'}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+                
+                {showChatSection && (
+                  <Animated.View 
+                    style={[
+                      styles.chatContainer,
+                      {
+                        opacity: chatAnimationValue,
+                        transform: [{
+                          translateY: chatAnimationValue.interpolate({
+                            inputRange: [0, 1],
+                            outputRange: [-20, 0],
+                          })
+                        }]
+                      }
+                    ]}
+                  >
+                    {/* Suggested Questions */}
+                    {chatHistory.length === 0 && aiChatService.current && (
+                      <View style={styles.suggestionsContainer}>
+                        <View style={styles.suggestionsHeader}>
+                          <Text style={styles.suggestionsTitle}>💡 Suggested Questions</Text>
+                          <Text style={styles.suggestionsSubtitle}>Tap any question to get started</Text>
+                        </View>
+                        <View style={styles.suggestionsGrid}>
+                          {aiChatService.current.getSuggestedQuestions(selectedTranscription).map((question, index) => (
+                            <TouchableOpacity 
+                              key={index}
+                              style={styles.suggestionChip}
+                              onPress={() => handleSuggestedQuestion(question)}
+                              activeOpacity={0.7}
+                            >
+                              <Text style={styles.suggestionText}>{question}</Text>
+                            </TouchableOpacity>
+                          ))}
+                        </View>
+                      </View>
+                    )}
+
+                    {/* Chat Messages */}
+                    {(chatHistory.length > 0 || isTyping) && (
+                      <View style={styles.chatMessagesContainer}>
+                        <ScrollView 
+                          ref={chatScrollViewRef}
+                          style={styles.chatMessages} 
+                          showsVerticalScrollIndicator={true}
+                          contentContainerStyle={styles.chatMessagesContent}
+                          onContentSizeChange={scrollToBottom}
+                        >
+                          {chatHistory.map((message, index) => (
+                            <View key={message.id || index} style={[
+                              styles.chatMessage,
+                              message.role === 'user' ? styles.userMessage : styles.aiMessage
+                            ]}>
+                              {message.role === 'assistant' && (
+                                <View style={styles.aiMessageHeader}>
+                                  <Text style={styles.aiLabel}>🤖 AI Assistant</Text>
+                                </View>
+                              )}
+                              <Text style={[
+                                styles.messageText,
+                                message.role === 'user' ? styles.userMessageText : styles.aiMessageText
+                              ]}>
+                                {message.content}
+                              </Text>
+                              <Text style={[
+                                styles.messageTime,
+                                message.role === 'user' ? styles.userMessageTime : styles.aiMessageTime
+                              ]}>
+                                {new Date(message.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                              </Text>
+                            </View>
+                          ))}
+                          
+                          {/* Typing Indicator */}
+                          {isTyping && (
+                            <View style={[styles.chatMessage, styles.aiMessage, styles.typingMessage]}>
+                              <View style={styles.aiMessageHeader}>
+                                <Text style={styles.aiLabel}>🤖 AI Assistant</Text>
+                              </View>
+                              <View style={styles.typingIndicator}>
+                                <Animated.View style={[
+                                  styles.typingDot,
+                                  {
+                                    opacity: typingDot1,
+                                    transform: [{
+                                      scale: typingDot1.interpolate({
+                                        inputRange: [0, 1],
+                                        outputRange: [1, 1.3],
+                                      })
+                                    }]
+                                  }
+                                ]} />
+                                <Animated.View style={[
+                                  styles.typingDot,
+                                  {
+                                    opacity: typingDot2,
+                                    transform: [{
+                                      scale: typingDot2.interpolate({
+                                        inputRange: [0, 1],
+                                        outputRange: [1, 1.3],
+                                      })
+                                    }]
+                                  }
+                                ]} />
+                                <Animated.View style={[
+                                  styles.typingDot,
+                                  {
+                                    opacity: typingDot3,
+                                    transform: [{
+                                      scale: typingDot3.interpolate({
+                                        inputRange: [0, 1],
+                                        outputRange: [1, 1.3],
+                                      })
+                                    }]
+                                  }
+                                ]} />
+                                <Text style={styles.typingText}>Thinking...</Text>
+                              </View>
+                            </View>
+                          )}
+                        </ScrollView>
+                      </View>
+                    )}
+
+                    {/* Chat Input */}
+                    <KeyboardAvoidingView 
+                      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+                      style={styles.chatInputSection}
+                    >
+                      <View style={styles.chatInputContainer}>
+                        <View style={[styles.chatInputWrapper, inputFocused && styles.chatInputWrapperFocused]}>
+                          <TextInput
+                            ref={chatInputRef}
+                            style={[styles.chatInput, inputFocused && styles.chatInputFocused]}
+                            placeholder="Ask about this recording..."
+                            placeholderTextColor="#888"
+                            value={chatMessage}
+                            onChangeText={setChatMessage}
+                            multiline={true}
+                            maxLength={500}
+                            editable={!isChatLoading}
+                            textAlignVertical="top"
+                            onFocus={() => setInputFocused(true)}
+                            onBlur={() => setInputFocused(false)}
+                            returnKeyType="send"
+                            blurOnSubmit={false}
+                            onSubmitEditing={() => {
+                              if (chatMessage.trim() && !isChatLoading) {
+                                handleSendChatMessage();
+                              }
+                            }}
+                          />
+                          <Text style={[
+                            styles.characterCount,
+                            chatMessage.length > 450 && styles.characterCountWarning,
+                            chatMessage.length >= 500 && styles.characterCountError
+                          ]}>
+                            {chatMessage.length}/500
+                          </Text>
+                        </View>
+                        <TouchableOpacity 
+                          style={[
+                            styles.sendButton, 
+                            (!chatMessage.trim() || isChatLoading) ? styles.disabledSendButton : styles.activeSendButton
+                          ]} 
+                          onPress={handleSendChatMessage}
+                          disabled={!chatMessage.trim() || isChatLoading}
+                          activeOpacity={0.7}
+                        >
+                          {isChatLoading ? (
+                            <ActivityIndicator size="small" color="#ffffff" />
+                          ) : (
+                            <Text style={styles.sendButtonText}>Send</Text>
+                          )}
+                        </TouchableOpacity>
+                      </View>
+                    </KeyboardAvoidingView>
+
+                    {/* Chat Actions */}
+                    {chatHistory.length > 0 && (
+                      <View style={styles.chatActions}>
+                        <View style={styles.chatStats}>
+                          <Text style={styles.chatStatsText}>
+                            {chatHistory.length} message{chatHistory.length !== 1 ? 's' : ''} in conversation
+                          </Text>
+                        </View>
+                        <TouchableOpacity style={styles.clearChatButton} onPress={clearChatHistory}>
+                          <Text style={styles.clearChatText}>🗑️ Clear</Text>
+                        </TouchableOpacity>
+                      </View>
+                    )}
+                  </Animated.View>
+                )}
               </View>
 
               {/* Technical Details Section */}
@@ -1296,5 +1710,293 @@ const styles = StyleSheet.create({
     color: '#ffffff',
     fontSize: 14,
     fontWeight: 'bold',
+  },
+  // Chat styles
+  chatHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    marginBottom: 16,
+  },
+  chatTitleContainer: {
+    flex: 1,
+  },
+  chatSubtitle: {
+    color: '#888',
+    fontSize: 12,
+    marginTop: 2,
+    fontStyle: 'italic',
+  },
+  toggleChatButton: {
+    backgroundColor: '#444',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 20,
+    marginLeft: 12,
+    borderWidth: 1,
+    borderColor: '#666',
+  },
+  toggleChatButtonActive: {
+    backgroundColor: '#6f42c1',
+    borderColor: '#8a63d2',
+  },
+  toggleChatText: {
+    color: '#ffffff',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  chatContainer: {
+    backgroundColor: '#1a1a1a',
+    borderRadius: 12,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: '#333',
+    marginTop: 4,
+  },
+  suggestionsContainer: {
+    marginBottom: 20,
+  },
+  suggestionsHeader: {
+    marginBottom: 12,
+  },
+  suggestionsTitle: {
+    color: '#e8e8e8',
+    fontSize: 14,
+    fontWeight: '600',
+    marginBottom: 2,
+  },
+  suggestionsSubtitle: {
+    color: '#888',
+    fontSize: 11,
+    fontStyle: 'italic',
+  },
+  suggestionsGrid: {
+    flexDirection: 'column',
+    gap: 8,
+  },
+  suggestionChip: {
+    backgroundColor: '#2a2a2a',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#444',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.2,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  suggestionText: {
+    color: '#e0e0e0',
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  chatMessagesContainer: {
+    marginBottom: 16,
+  },
+  chatMessages: {
+    maxHeight: 300,
+  },
+  chatMessagesContent: {
+    paddingVertical: 8,
+  },
+  chatMessage: {
+    marginBottom: 12,
+    maxWidth: '88%',
+  },
+  userMessage: {
+    alignSelf: 'flex-end',
+    backgroundColor: '#007bff',
+    borderRadius: 18,
+    borderBottomRightRadius: 6,
+    padding: 14,
+    marginLeft: 40,
+    shadowColor: '#007bff',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    elevation: 3,
+    position: 'relative',
+  },
+  aiMessage: {
+    alignSelf: 'flex-start',
+    backgroundColor: '#2a2a2a',
+    borderRadius: 18,
+    borderBottomLeftRadius: 6,
+    padding: 14,
+    marginRight: 40,
+    borderWidth: 1,
+    borderColor: '#444',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.2,
+    shadowRadius: 2,
+    elevation: 2,
+    position: 'relative',
+  },
+  aiMessageHeader: {
+    marginBottom: 4,
+  },
+  aiLabel: {
+    color: '#6f42c1',
+    fontSize: 10,
+    fontWeight: 'bold',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  messageText: {
+    fontSize: 14,
+    lineHeight: 20,
+  },
+  userMessageText: {
+    color: '#ffffff',
+    fontWeight: '500',
+  },
+  aiMessageText: {
+    color: '#e8e8e8',
+  },
+  messageTime: {
+    fontSize: 10,
+    marginTop: 6,
+  },
+  userMessageTime: {
+    color: 'rgba(255, 255, 255, 0.7)',
+    textAlign: 'right',
+  },
+  aiMessageTime: {
+    color: '#888',
+    textAlign: 'left',
+  },
+  chatInputSection: {
+    borderTopWidth: 1,
+    borderTopColor: '#333',
+    paddingTop: 12,
+  },
+  chatInputContainer: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    gap: 8,
+  },
+  chatInputWrapper: {
+    flex: 1,
+    borderRadius: 12,
+    borderWidth: 2,
+    borderColor: 'transparent',
+  },
+  chatInputWrapperFocused: {
+    borderColor: '#007bff',
+  },
+  chatInput: {
+    backgroundColor: '#2a2a2a',
+    borderRadius: 12,
+    padding: 12,
+    color: '#ffffff',
+    maxHeight: 100,
+    minHeight: 44,
+    fontSize: 14,
+    borderWidth: 1,
+    borderColor: '#444',
+    lineHeight: 20,
+  },
+  chatInputFocused: {
+    backgroundColor: '#333',
+    borderColor: '#007bff',
+    shadowColor: '#007bff',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    elevation: 4,
+  },
+  characterCount: {
+    color: '#888',
+    fontSize: 10,
+    textAlign: 'right',
+    marginTop: 4,
+    marginRight: 4,
+  },
+  characterCountWarning: {
+    color: '#ffc107',
+  },
+  characterCountError: {
+    color: '#dc3545',
+    fontWeight: 'bold',
+  },
+  sendButton: {
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    minHeight: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 3,
+    elevation: 3,
+  },
+  activeSendButton: {
+    backgroundColor: '#007bff',
+  },
+  disabledSendButton: {
+    backgroundColor: '#555',
+    shadowOpacity: 0,
+    elevation: 0,
+  },
+  sendButtonText: {
+    color: '#ffffff',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  chatActions: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginTop: 12,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#333',
+  },
+  chatStats: {
+    flex: 1,
+  },
+  chatStatsText: {
+    color: '#888',
+    fontSize: 11,
+    fontStyle: 'italic',
+  },
+  clearChatButton: {
+    backgroundColor: '#dc3545',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 6,
+    opacity: 0.8,
+  },
+  clearChatText: {
+    color: '#ffffff',
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  // Typing indicator styles
+  typingMessage: {
+    opacity: 0.9,
+  },
+  typingIndicator: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 8,
+  },
+  typingDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#6f42c1',
+    marginRight: 6,
+  },
+  typingText: {
+    color: '#888',
+    fontSize: 12,
+    fontStyle: 'italic',
+    marginLeft: 8,
   },
 });
