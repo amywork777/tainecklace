@@ -15,6 +15,15 @@ export class TranscriptionService {
 
     console.log(`🎯 Starting transcription of ${pcmSamples.length} PCM samples...`);
 
+    // Basic audio validation - check if audio has some signal
+    const audioEnergy = this.calculateAudioEnergy(pcmSamples);
+    console.log(`🎵 Audio energy level: ${audioEnergy.toFixed(2)}`);
+    
+    if (audioEnergy < 10) { // Very low energy threshold
+      console.log('⚠️ Audio appears to be very quiet or silent');
+      // Continue anyway but user should know
+    }
+
     try {
       // Create WAV blob from PCM data
       const wavData = this.createWavData(pcmSamples, sampleRate);
@@ -48,10 +57,11 @@ export class TranscriptionService {
         body: JSON.stringify({
           audio_url: uploadData.upload_url,
           speech_model: 'best',
-          language_detection: true,
+          // language_detection: true, // Disabled - causes issues with quiet audio
           punctuate: true,
           format_text: true,
-          filter_profanity: false
+          filter_profanity: false,
+          language_code: 'en' // Default to English instead of auto-detection
         })
       });
 
@@ -76,18 +86,31 @@ export class TranscriptionService {
   async pollTranscriptionStatus(transcriptId) {
     console.log('⏳ Polling transcription status...');
     
-    while (true) {
+    let attempts = 0;
+    const maxAttempts = 30; // 30 attempts = 60 seconds max
+    
+    while (attempts < maxAttempts) {
+      attempts++;
+      
       try {
+        console.log(`📊 Poll attempt ${attempts}/${maxAttempts}...`);
+        
         const response = await fetch(`${this.baseUrl}/transcript/${transcriptId}`, {
-          headers: { 'authorization': this.apiKey }
+          headers: { 'authorization': this.apiKey },
+          timeout: 10000 // 10 second timeout per request
         });
 
         if (!response.ok) {
-          throw new Error(`Polling failed: ${response.status}`);
+          console.warn(`⚠️ Polling attempt ${attempts} failed with status ${response.status}`);
+          if (attempts >= maxAttempts) {
+            throw new Error(`Polling failed after ${maxAttempts} attempts: ${response.status}`);
+          }
+          await this.delay(2000);
+          continue;
         }
 
         const data = await response.json();
-        console.log(`📋 Status: ${data.status}`);
+        console.log(`📋 Status: ${data.status} (attempt ${attempts})`);
 
         if (data.status === 'completed') {
           console.log('✅ Transcription completed!');
@@ -106,10 +129,18 @@ export class TranscriptionService {
         await this.delay(2000);
 
       } catch (error) {
-        console.error('❌ Polling error:', error);
-        throw error;
+        console.error(`❌ Polling error on attempt ${attempts}:`, error.message);
+        
+        if (attempts >= maxAttempts) {
+          throw new Error(`Transcription polling failed after ${maxAttempts} attempts: ${error.message}`);
+        }
+        
+        // Wait longer before retrying on error
+        await this.delay(3000);
       }
     }
+    
+    throw new Error('Transcription polling timeout - no response after maximum attempts');
   }
 
   createWavData(pcmSamples, sampleRate) {
@@ -146,6 +177,17 @@ export class TranscriptionService {
     }
     
     return new Uint8Array(buffer);
+  }
+
+  calculateAudioEnergy(pcmSamples) {
+    // Calculate RMS (Root Mean Square) energy of audio samples
+    let sum = 0;
+    for (let i = 0; i < pcmSamples.length; i++) {
+      const sample = pcmSamples[i] / 32768; // Normalize to -1 to 1
+      sum += sample * sample;
+    }
+    const rms = Math.sqrt(sum / pcmSamples.length);
+    return rms * 1000; // Scale for easier reading
   }
 
   delay(ms) {

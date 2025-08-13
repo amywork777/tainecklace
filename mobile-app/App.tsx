@@ -16,6 +16,7 @@ import {
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { XiaoBLEManager } from './src/services/bleManager';
 import { TranscriptionService } from './src/services/TranscriptionService';
+import { BackgroundTaskManager } from './src/services/BackgroundTaskManager';
 
 const ASSEMBLYAI_KEY = 'your-assemblyai-api-key-here';
 
@@ -35,6 +36,8 @@ export default function App() {
   const [status, setStatus] = useState('Ready to connect');
   const [apiKey, setApiKey] = useState('');
   const [recordingDuration, setRecordingDuration] = useState(0);
+  const [isBackgroundCapable, setIsBackgroundCapable] = useState(false);
+  const [backgroundStatus, setBackgroundStatus] = useState('');
 
   const bleManager = useRef(null);
   const transcriptionService = useRef(null);
@@ -42,6 +45,7 @@ export default function App() {
   const statsInterval = useRef(null);
   const isRecordingRef = useRef(false);
   const recordingTimer = useRef(null);
+  const backgroundTaskManager = useRef(null);
 
   useEffect(() => {
     initializeApp();
@@ -72,6 +76,17 @@ export default function App() {
       } catch (error) {
         console.log('⚠️ Could not load saved transcriptions:', error.message);
       }
+
+      // Initialize background task manager
+      backgroundTaskManager.current = new BackgroundTaskManager();
+      backgroundTaskManager.current.setCallbacks({
+        onBackgroundStateChange: handleBackgroundStateChange,
+      });
+
+      // Check background permissions
+      const bgStatus = await backgroundTaskManager.current.getBackgroundPermissionStatus();
+      setIsBackgroundCapable(bgStatus !== 1); // 1 = Denied
+      setBackgroundStatus(bgStatus === 1 ? 'Disabled' : 'Available');
 
       setStatus('Ready to connect');
       console.log('✅ App initialization complete');
@@ -210,7 +225,7 @@ export default function App() {
     }
   };
 
-  const handleStartRecording = () => {
+  const handleStartRecording = async () => {
     if (!isConnected) {
       Alert.alert('Error', 'XIAO device not connected');
       return;
@@ -229,6 +244,19 @@ export default function App() {
     recordingTimer.current = setInterval(() => {
       setRecordingDuration(prev => prev + 0.1);
     }, 100);
+
+    // Enable background recording if available
+    if (backgroundTaskManager.current && isBackgroundCapable) {
+      try {
+        await backgroundTaskManager.current.startBackgroundRecording(
+          bleManager.current, 
+          audioBuffer
+        );
+        console.log('✅ Background recording enabled');
+      } catch (error) {
+        console.error('❌ Failed to enable background recording:', error);
+      }
+    }
   };
 
   const handleStopRecording = async () => {
@@ -269,7 +297,7 @@ export default function App() {
       }
       
       const bufferSizeKB = Math.round((audioBuffer.current.length * 2) / 1024); // 16-bit samples
-    console.log(`🎵 Transcribing ${audioBuffer.current.length} audio samples (${bufferSizeKB}KB)...`);
+      console.log(`🎵 Transcribing ${audioBuffer.current.length} audio samples (${bufferSizeKB}KB)...`);
       setIsTranscribing(true);
       
       const result = await transcriptionService.current.transcribeAudio(
@@ -279,29 +307,35 @@ export default function App() {
       
       const newTranscription = {
         id: Date.now(),
-        text: result.text,
-        confidence: result.confidence,
+        text: result.text || '[No transcription]',
+        confidence: result.confidence || 0,
         timestamp: new Date().toISOString(),
         duration: audioBuffer.current.length / 16000 // seconds
       };
       
-      setTranscription(result.text);
-      
-      // Add to transcriptions list
-      const updatedTranscriptions = [newTranscription, ...transcriptions];
-      setTranscriptions(updatedTranscriptions);
+      setTranscription(newTranscription.text);
+      setTranscriptions(prev => [newTranscription, ...prev]);
       
       // Save to storage
-      await AsyncStorage.setItem('transcriptions', JSON.stringify(updatedTranscriptions));
+      await AsyncStorage.setItem('transcriptions', JSON.stringify([newTranscription, ...transcriptions]));
       
       setStatus('Transcription complete');
       
     } catch (error) {
-      console.error('Transcription error:', error);
-      Alert.alert('Transcription Error', error.message);
+      console.error('❌ Transcription error:', error);
+      Alert.alert('Transcription Error', error.message || 'Unknown error occurred');
       setStatus('Transcription failed');
     } finally {
       setIsTranscribing(false);
+      
+      // Disable background recording (now safe from crashes)
+      if (backgroundTaskManager.current) {
+        try {
+          await backgroundTaskManager.current.stopBackgroundRecording();
+        } catch (error) {
+          console.error('❌ Background cleanup error:', error);
+        }
+      }
     }
   };
 
@@ -320,6 +354,16 @@ export default function App() {
     }
   };
 
+  const handleBackgroundStateChange = (state, duration) => {
+    if (state === 'background') {
+      console.log('📱 App went to background during recording');
+      setBackgroundStatus('Recording in background...');
+    } else if (state === 'active') {
+      console.log(`📱 App returned to foreground after ${duration}s`);
+      setBackgroundStatus('Background capable');
+    }
+  };
+
   const cleanup = () => {
     if (bleManager.current) {
       bleManager.current.destroy();
@@ -329,6 +373,9 @@ export default function App() {
     }
     if (recordingTimer.current) {
       clearInterval(recordingTimer.current);
+    }
+    if (backgroundTaskManager.current) {
+      backgroundTaskManager.current.destroy();
     }
   };
 
@@ -369,6 +416,16 @@ export default function App() {
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Device Connection</Text>
           <Text style={styles.status}>{status}</Text>
+          
+          {/* Background Status */}
+          <View style={styles.backgroundStatus}>
+            <Text style={styles.backgroundStatusLabel}>
+              🔄 Background Recording: 
+            </Text>
+            <Text style={[styles.backgroundStatusText, isBackgroundCapable ? styles.enabledText : styles.disabledText]}>
+              {backgroundStatus}
+            </Text>
+          </View>
           
           {!isConnected ? (
             <TouchableOpacity 
@@ -448,7 +505,7 @@ export default function App() {
         </View>
 
         {/* Current Transcription */}
-        {transcription && (
+        {transcription && transcription.length > 0 && (
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Latest Transcription</Text>
             <View style={styles.transcriptionBox}>
@@ -460,27 +517,30 @@ export default function App() {
         {/* Transcription History */}
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Transcription History</Text>
-          {transcriptions.length === 0 ? (
+          {!transcriptions || transcriptions.length === 0 ? (
             <Text style={styles.emptyText}>No transcriptions yet</Text>
           ) : (
-            transcriptions.slice(0, 10).map((item, index) => (
+            transcriptions.slice(0, 10).map((item, index) => {
+              if (!item || typeof item !== 'object') return null;
+              return (
               <View key={item.id || `transcription-${index}`} style={styles.historyItem}>
                 <View style={styles.historyHeader}>
                   <Text style={styles.historyTime}>
-                    {new Date(item.timestamp).toLocaleTimeString()}
+                    {item.timestamp ? new Date(item.timestamp).toLocaleTimeString() : 'Unknown time'}
                   </Text>
                   <Text style={styles.historyDuration}>
-                    {formatDuration(item.duration)}
+                    {formatDuration(item.duration || 0)}
                   </Text>
                 </View>
-                <Text style={styles.historyText}>{item.text}</Text>
+                <Text style={styles.historyText}>{item.text || '[No text]'}</Text>
                 {item.confidence && (
                   <Text style={styles.confidence}>
                     Confidence: {(item.confidence * 100).toFixed(1)}%
                   </Text>
                 )}
               </View>
-            ))
+              );
+            }).filter(Boolean) // Remove null entries
           )}
         </View>
       </ScrollView>
@@ -551,6 +611,27 @@ const styles = StyleSheet.create({
     color: '#888',
     marginBottom: 12,
     fontStyle: 'italic',
+  },
+  backgroundStatus: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 12,
+    paddingVertical: 4,
+  },
+  backgroundStatusLabel: {
+    color: '#ccc',
+    fontSize: 12,
+  },
+  backgroundStatusText: {
+    fontSize: 12,
+    fontWeight: 'bold',
+    marginLeft: 4,
+  },
+  enabledText: {
+    color: '#28a745',
+  },
+  disabledText: {
+    color: '#dc3545',
   },
   connectButton: {
     backgroundColor: '#007bff',

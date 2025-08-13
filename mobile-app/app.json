@@ -20,7 +20,9 @@
         "NSLocationWhenInUseUsageDescription": "This app needs location access to scan for nearby Bluetooth devices",
         "UIBackgroundModes": [
           "bluetooth-central",
-          "bluetooth-central"
+          "bluetooth-peripheral", 
+          "background-fetch",
+          "background-processing"
         ],
         "ITSAppUsesNonExemptEncryption": false
       },
