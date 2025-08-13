@@ -204,7 +204,10 @@ export class XiaoBLEManager {
       
       // Send to callback for processing
       if (this.callbacks.onAudioData && pcmSamples.length > 0) {
+        console.log(`🔔 Calling onAudioData callback with ${pcmSamples.length} samples`);
         this.callbacks.onAudioData(pcmSamples);
+      } else {
+        console.log(`🚫 Callback not available: onAudioData=${!!this.callbacks.onAudioData}, samples=${pcmSamples.length}`);
       }
       
     } catch (error) {

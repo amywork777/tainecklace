@@ -21,6 +21,8 @@ const ASSEMBLYAI_KEY = 'your-assemblyai-api-key-here';
 
 export default function App() {
   const [isConnected, setIsConnected] = useState(false);
+  const [isConnecting, setIsConnecting] = useState(false);
+  const [isDisconnecting, setIsDisconnecting] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [stats, setStats] = useState({
@@ -32,11 +34,14 @@ export default function App() {
   const [transcriptions, setTranscriptions] = useState([]);
   const [status, setStatus] = useState('Ready to connect');
   const [apiKey, setApiKey] = useState('');
+  const [recordingDuration, setRecordingDuration] = useState(0);
 
   const bleManager = useRef(null);
   const transcriptionService = useRef(null);
   const audioBuffer = useRef([]);
   const statsInterval = useRef(null);
+  const isRecordingRef = useRef(false);
+  const recordingTimer = useRef(null);
 
   useEffect(() => {
     initializeApp();
@@ -96,7 +101,10 @@ export default function App() {
   };
 
   const handleConnectXIAO = async () => {
+    if (isConnecting || isConnected) return;
+    
     try {
+      setIsConnecting(true);
       setStatus('Initializing Bluetooth...');
       
       // Request permissions first
@@ -106,13 +114,13 @@ export default function App() {
       if (!bleManager.current) {
         bleManager.current = new XiaoBLEManager();
         await bleManager.current.initialize();
-        
-        // Set up callbacks
-        bleManager.current.setCallbacks({
-          onAudioData: handleAudioData,
-          onDisconnected: handleDisconnection,
-        });
       }
+      
+      // Always set callbacks (in case they were cleared)
+      bleManager.current.setCallbacks({
+        onAudioData: handleAudioData,
+        onDisconnected: handleDisconnection,
+      });
       
       setStatus('Scanning for XIAO...');
       const device = await bleManager.current.scanForXIAO(10000);
@@ -136,30 +144,66 @@ export default function App() {
       console.error('Connection error:', error);
       Alert.alert('Connection Error', error.message);
       setStatus(`Connection failed: ${error.message}`);
+    } finally {
+      setIsConnecting(false);
+    }
+  };
+
+  const handleDisconnectXIAO = async () => {
+    if (isDisconnecting || !isConnected) return;
+    
+    try {
+      setIsDisconnecting(true);
+      setStatus('Disconnecting...');
+      
+      if (bleManager.current) {
+        await bleManager.current.disconnect();
+      }
+      
+      // Force cleanup
+      handleDisconnection();
+      
+    } catch (error) {
+      console.error('Disconnect error:', error);
+      // Force cleanup even if disconnect fails
+      handleDisconnection();
+    } finally {
+      setIsDisconnecting(false);
     }
   };
 
   const handleDisconnection = () => {
     setIsConnected(false);
     setIsRecording(false);
+    isRecordingRef.current = false;
     setStatus('Disconnected');
     
     if (statsInterval.current) {
       clearInterval(statsInterval.current);
       statsInterval.current = null;
     }
+    
+    if (recordingTimer.current) {
+      clearInterval(recordingTimer.current);
+      recordingTimer.current = null;
+    }
   };
 
   const handleAudioData = (pcmSamples) => {
     // Always buffer audio data when connected, only process during recording
     if (pcmSamples && pcmSamples.length > 0) {
-      if (isRecording) {
+      if (isRecordingRef.current) {
         console.log(`🎵 Buffering ${pcmSamples.length} audio samples (recording active)`);
         audioBuffer.current.push(...pcmSamples);
       }
-      // Still log when not recording to show audio is flowing
+      // Special case: still recording UI state but ref is false (flushing mode)
+      else if (isRecording) {
+        console.log(`🚰 Flushing ${pcmSamples.length} audio samples (finishing recording)`);
+        audioBuffer.current.push(...pcmSamples);
+      }
+      // Still log when not recording to show audio is flowing (reduced logging)
       else {
-        if (Math.random() < 0.01) { // Log 1% of packets to avoid spam
+        if (Math.random() < 0.001) { // Log 0.1% of packets to reduce spam
           console.log(`🔊 Audio flowing: ${pcmSamples.length} samples (not recording)`);
         }
       }
@@ -175,18 +219,40 @@ export default function App() {
     // Clear previous audio buffer
     audioBuffer.current = [];
     setIsRecording(true);
+    isRecordingRef.current = true;
     setTranscription('');
+    setRecordingDuration(0);
     setStatus('Recording...');
     console.log('🎤 Started recording, clearing buffer and waiting for audio data...');
+    
+    // Start recording timer
+    recordingTimer.current = setInterval(() => {
+      setRecordingDuration(prev => prev + 0.1);
+    }, 100);
   };
 
   const handleStopRecording = async () => {
     if (!isRecording) return;
     
     setIsRecording(false);
+    setStatus('Finishing recording...');
+    
+    // Stop recording timer
+    if (recordingTimer.current) {
+      clearInterval(recordingTimer.current);
+      recordingTimer.current = null;
+    }
+    
+    console.log(`🔍 Pre-flush audio buffer: ${audioBuffer.current.length} samples`);
+    
+    // Wait 500ms for any remaining audio packets to arrive
+    await new Promise(resolve => setTimeout(resolve, 500));
+    
+    // Now stop the recording flag to prevent new audio from being buffered
+    isRecordingRef.current = false;
     setStatus('Processing audio...');
     
-    console.log(`🔍 Checking audio buffer: ${audioBuffer.current.length} samples`);
+    console.log(`🔍 Post-flush audio buffer: ${audioBuffer.current.length} samples`);
     
     try {
       if (audioBuffer.current.length === 0) {
@@ -202,7 +268,8 @@ export default function App() {
         return;
       }
       
-      console.log(`🎵 Transcribing ${audioBuffer.current.length} audio samples...`);
+      const bufferSizeKB = Math.round((audioBuffer.current.length * 2) / 1024); // 16-bit samples
+    console.log(`🎵 Transcribing ${audioBuffer.current.length} audio samples (${bufferSizeKB}KB)...`);
       setIsTranscribing(true);
       
       const result = await transcriptionService.current.transcribeAudio(
@@ -260,6 +327,9 @@ export default function App() {
     if (statsInterval.current) {
       clearInterval(statsInterval.current);
     }
+    if (recordingTimer.current) {
+      clearInterval(recordingTimer.current);
+    }
   };
 
   const formatDuration = (seconds) => {
@@ -301,15 +371,24 @@ export default function App() {
           <Text style={styles.status}>{status}</Text>
           
           {!isConnected ? (
-            <TouchableOpacity style={styles.connectButton} onPress={handleConnectXIAO}>
-              <Text style={styles.buttonText}>Connect to XIAO</Text>
+            <TouchableOpacity 
+              style={[styles.connectButton, (isConnecting) && styles.disabledButton]} 
+              onPress={handleConnectXIAO}
+              disabled={isConnecting}
+            >
+              <Text style={styles.buttonText}>
+                {isConnecting ? '🔄 Connecting...' : 'Connect to XIAO'}
+              </Text>
             </TouchableOpacity>
           ) : (
             <TouchableOpacity 
-              style={[styles.connectButton, { backgroundColor: '#dc3545' }]} 
-              onPress={() => bleManager.current?.disconnect()}
+              style={[styles.connectButton, { backgroundColor: '#dc3545' }, isDisconnecting && styles.disabledButton]} 
+              onPress={handleDisconnectXIAO}
+              disabled={isDisconnecting}
             >
-              <Text style={styles.buttonText}>Disconnect</Text>
+              <Text style={styles.buttonText}>
+                {isDisconnecting ? '🔄 Disconnecting...' : 'Disconnect'}
+              </Text>
             </TouchableOpacity>
           )}
         </View>
@@ -349,9 +428,14 @@ export default function App() {
                 <Text style={styles.recordButtonText}>🎤 Start Recording</Text>
               </TouchableOpacity>
             ) : (
-              <TouchableOpacity style={styles.stopButton} onPress={handleStopRecording}>
-                <Text style={styles.recordButtonText}>⏹️ Stop Recording</Text>
-              </TouchableOpacity>
+              <View style={styles.recordingContainer}>
+                <TouchableOpacity style={styles.stopButton} onPress={handleStopRecording}>
+                  <Text style={styles.recordButtonText}>⏹️ Stop Recording</Text>
+                </TouchableOpacity>
+                <Text style={styles.recordingTimer}>
+                  {recordingDuration.toFixed(1)}s • {Math.floor(audioBuffer.current.length / 1000)}k samples
+                </Text>
+              </View>
             )}
           </View>
 
@@ -380,7 +464,7 @@ export default function App() {
             <Text style={styles.emptyText}>No transcriptions yet</Text>
           ) : (
             transcriptions.slice(0, 10).map((item, index) => (
-              <View key={`transcription-${index}`} style={styles.historyItem}>
+              <View key={item.id || `transcription-${index}`} style={styles.historyItem}>
                 <View style={styles.historyHeader}>
                   <Text style={styles.historyTime}>
                     {new Date(item.timestamp).toLocaleTimeString()}
@@ -497,6 +581,15 @@ const styles = StyleSheet.create({
   recordingControls: {
     alignItems: 'center',
     marginBottom: 16,
+  },
+  recordingContainer: {
+    alignItems: 'center',
+  },
+  recordingTimer: {
+    color: '#dc3545',
+    fontSize: 14,
+    fontWeight: 'bold',
+    marginTop: 8,
   },
   recordButton: {
     backgroundColor: '#dc3545',

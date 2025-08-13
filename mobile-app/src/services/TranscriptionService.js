@@ -47,7 +47,11 @@ export class TranscriptionService {
         },
         body: JSON.stringify({
           audio_url: uploadData.upload_url,
-          speech_model: 'best'
+          speech_model: 'best',
+          language_detection: true,
+          punctuate: true,
+          format_text: true,
+          filter_profanity: false
         })
       });
 
@@ -87,8 +91,10 @@ export class TranscriptionService {
 
         if (data.status === 'completed') {
           console.log('✅ Transcription completed!');
+          const resultText = data.text || '[No speech detected]';
+          console.log(`📝 Transcription: "${resultText.substring(0, 100)}${resultText.length > 100 ? '...' : ''}"`); 
           return {
-            text: data.text || '[No speech detected]',
+            text: resultText,
             confidence: data.confidence,
             words: data.words || []
           };
