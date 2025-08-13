@@ -1,11 +1,14 @@
 {
   "expo": {
-    "name": "TaiNecklaceExpo",
+    "name": "TaiNecklace",
     "slug": "TaiNecklaceExpo",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
-    "userInterfaceStyle": "light",
+    "userInterfaceStyle": "dark",
+    "description": "AI-powered voice companion that connects to XIAO BLE devices for real-time audio streaming and transcription. Chat with your recordings using AI for deeper insights.",
+    "keywords": ["voice", "ai", "transcription", "bluetooth", "xiao", "audio", "assistant"],
+    "privacy": "public",
     "newArchEnabled": true,
     "splash": {
       "image": "./assets/splash-icon.png",
@@ -20,9 +23,7 @@
         "NSLocationWhenInUseUsageDescription": "This app needs location access to scan for nearby Bluetooth devices",
         "UIBackgroundModes": [
           "bluetooth-central",
-          "bluetooth-peripheral", 
-          "background-fetch",
-          "background-processing"
+          "bluetooth-peripheral"
         ],
         "ITSAppUsesNonExemptEncryption": false
       },
