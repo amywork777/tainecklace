@@ -151,8 +151,11 @@ export default function App() {
   };
 
   const handleAudioData = (pcmSamples) => {
-    // Buffer audio data for batch transcription
-    audioBuffer.current.push(...pcmSamples);
+    // Only buffer audio data when actively recording
+    if (isRecording && pcmSamples && pcmSamples.length > 0) {
+      console.log(`🎵 Buffering ${pcmSamples.length} audio samples`);
+      audioBuffer.current.push(...pcmSamples);
+    }
   };
 
   const handleStartRecording = () => {
@@ -166,6 +169,7 @@ export default function App() {
     setIsRecording(true);
     setTranscription('');
     setStatus('Recording...');
+    console.log('🎤 Started recording, clearing buffer and waiting for audio data...');
   };
 
   const handleStopRecording = async () => {
@@ -174,9 +178,12 @@ export default function App() {
     setIsRecording(false);
     setStatus('Processing audio...');
     
+    console.log(`🔍 Checking audio buffer: ${audioBuffer.current.length} samples`);
+    
     try {
       if (audioBuffer.current.length === 0) {
-        Alert.alert('Error', 'No audio data recorded');
+        console.log('❌ No audio data in buffer during recording period');
+        Alert.alert('Error', 'No audio data recorded. Check XIAO connection and ensure it\'s streaming audio.');
         setStatus('Connected to XIAO');
         return;
       }
