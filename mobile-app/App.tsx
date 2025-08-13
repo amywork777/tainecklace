@@ -151,10 +151,18 @@ export default function App() {
   };
 
   const handleAudioData = (pcmSamples) => {
-    // Only buffer audio data when actively recording
-    if (isRecording && pcmSamples && pcmSamples.length > 0) {
-      console.log(`🎵 Buffering ${pcmSamples.length} audio samples`);
-      audioBuffer.current.push(...pcmSamples);
+    // Always buffer audio data when connected, only process during recording
+    if (pcmSamples && pcmSamples.length > 0) {
+      if (isRecording) {
+        console.log(`🎵 Buffering ${pcmSamples.length} audio samples (recording active)`);
+        audioBuffer.current.push(...pcmSamples);
+      }
+      // Still log when not recording to show audio is flowing
+      else {
+        if (Math.random() < 0.01) { // Log 1% of packets to avoid spam
+          console.log(`🔊 Audio flowing: ${pcmSamples.length} samples (not recording)`);
+        }
+      }
     }
   };
 
