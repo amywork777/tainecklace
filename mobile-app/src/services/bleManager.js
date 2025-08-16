@@ -92,11 +92,30 @@ export class GenericBLEManager {
     console.log(`🔌 Connecting to device: ${deviceId}`);
     
     try {
-      this.device = await this.manager.connectToDevice(deviceId);
+      // Connect with timeout to prevent hanging
+      this.device = await this.manager.connectToDevice(deviceId, {
+        timeout: 10000,
+        autoConnect: false,
+        requestMTU: 244
+      });
       console.log('✅ Connected to device');
       
+      // Wait for connection to stabilize (critical for Nicla Voice)
+      console.log('⏳ Allowing connection to stabilize...');
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      
+      // Check if still connected after stabilization
+      const isStillConnected = await this.device.isConnected();
+      if (!isStillConnected) {
+        throw new Error('Device disconnected during stabilization');
+      }
+      
+      console.log('🔍 Starting gentle service discovery...');
       await this.device.discoverAllServicesAndCharacteristics();
       console.log('✅ Services and characteristics discovered');
+      
+      // Another stabilization delay before marking as connected
+      await new Promise(resolve => setTimeout(resolve, 500));
       
       this.isConnected = true;
       
@@ -109,9 +128,12 @@ export class GenericBLEManager {
         }
       });
       
+      console.log('✅ Connection fully established and stable');
       return true;
     } catch (error) {
       console.error('❌ Connection failed:', error);
+      this.isConnected = false;
+      this.device = null;
       throw error;
     }
   }
@@ -124,13 +146,30 @@ export class GenericBLEManager {
     console.log('🎤 Starting audio streaming...');
     
     try {
-      // Start listening for audio data on TX characteristic
+      // Wait a moment before starting monitoring (critical for stability)
+      console.log('⏳ Preparing for audio streaming...');
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      
+      // Verify device is still connected before monitoring
+      const isStillConnected = await this.device.isConnected();
+      if (!isStillConnected) {
+        throw new Error('Device disconnected before audio streaming could start');
+      }
+      
+      // Start listening for audio data on TX characteristic with gentle error handling
       this.device.monitorCharacteristicForService(
         this.NUS_SERVICE_UUID,
         this.NUS_TX_CHAR_UUID,
         (error, characteristic) => {
           if (error) {
-            console.error('❌ Monitor error:', error);
+            // Don't immediately fail - device might just be temporarily busy
+            console.warn('⚠️ Monitor warning:', error.message);
+            
+            // Only disconnect if it's a fatal error
+            if (error.message.includes('disconnected') || error.message.includes('Device not found')) {
+              console.error('❌ Fatal monitor error - device lost:', error);
+              this.handleConnectionLoss();
+            }
             return;
           }
           
@@ -140,11 +179,19 @@ export class GenericBLEManager {
         }
       );
       
-      console.log('✅ Audio streaming started');
+      console.log('✅ Audio streaming started with gentle monitoring');
       return true;
     } catch (error) {
       console.error('❌ Failed to start audio streaming:', error);
       throw error;
+    }
+  }
+
+  handleConnectionLoss() {
+    console.log('💔 Handling connection loss...');
+    this.isConnected = false;
+    if (this.callbacks.onDisconnected) {
+      this.callbacks.onDisconnected();
     }
   }
 
