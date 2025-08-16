@@ -1,11 +1,11 @@
 /**
- * BLE Manager for XIAO Device Connection
- * Handles Nordic UART Service (NUS) communication
+ * Generic BLE Manager for Audio Device Connection
+ * Supports multiple BLE devices with audio streaming capabilities
  */
 import { BleManager } from 'react-native-ble-plx';
 import { ADPCMDecoder } from './ADPCMDecoder';
 
-export class XiaoBLEManager {
+export class GenericBLEManager {
   constructor() {
     this.manager = new BleManager();
     this.device = null;
@@ -19,10 +19,17 @@ export class XiaoBLEManager {
       audioSamplesGenerated: 0
     };
     
-    // XIAO BLE Service UUIDs (Nordic UART Service)
+    // Common BLE Service UUIDs for audio devices
+    this.COMMON_AUDIO_SERVICES = [
+      '6e400001-b5a3-f393-e0a9-e50e24dcca9e', // Nordic UART Service (XIAO)
+      '0000180a-0000-1000-8000-00805f9b34fb', // Device Information Service
+      '0000180f-0000-1000-8000-00805f9b34fb', // Battery Service
+      '0000110b-0000-1000-8000-00805f9b34fb', // Audio Sink Service
+    ];
     this.NUS_SERVICE_UUID = '6e400001-b5a3-f393-e0a9-e50e24dcca9e';
-    this.NUS_TX_CHAR_UUID = '6e400003-b5a3-f393-e0a9-e50e24dcca9e'; // XIAO transmits to us
-    this.NUS_RX_CHAR_UUID = '6e400002-b5a3-f393-e0a9-e50e24dcca9e'; // We transmit to XIAO
+    this.NUS_TX_CHAR_UUID = '6e400003-b5a3-f393-e0a9-e50e24dcca9e';
+    this.NUS_RX_CHAR_UUID = '6e400002-b5a3-f393-e0a9-e50e24dcca9e';
+    this.discoveredDevices = [];
   }
 
   async initialize() {
@@ -38,16 +45,19 @@ export class XiaoBLEManager {
     return true;
   }
 
-  async scanForXIAO(timeoutMs = 10000) {
-    console.log('🔍 Scanning for XIAO devices...');
+  async scanForAudioDevices(timeoutMs = 10000) {
+    console.log('🔍 Scanning for BLE audio devices...');
+    this.discoveredDevices = [];
     
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
         this.manager.stopDeviceScan();
-        reject(new Error('XIAO device not found within timeout'));
+        console.log(`✅ Found ${this.discoveredDevices.length} devices`);
+        resolve(this.discoveredDevices);
       }, timeoutMs);
 
-      this.manager.startDeviceScan([this.NUS_SERVICE_UUID], null, (error, device) => {
+      // Scan with Nordic UART Service filter for audio devices
+      this.manager.startDeviceScan(['6e400001-b5a3-f393-e0a9-e50e24dcca9e'], null, (error, device) => {
         if (error) {
           clearTimeout(timeout);
           this.manager.stopDeviceScan();
@@ -55,14 +65,27 @@ export class XiaoBLEManager {
           return;
         }
 
-        if (device && device.name && device.name.toLowerCase().includes('xiao')) {
-          clearTimeout(timeout);
-          this.manager.stopDeviceScan();
-          console.log(`✅ Found XIAO device: ${device.name} (${device.id})`);
-          resolve(device);
+        if (device && device.name && !this.discoveredDevices.find(d => d.id === device.id)) {
+          console.log(`📱 Found device: ${device.name} (${device.id})`);
+          this.discoveredDevices.push({
+            id: device.id,
+            name: device.name,
+            rssi: device.rssi,
+            serviceUUIDs: device.serviceUUIDs || []
+          });
         }
       });
     });
+  }
+
+  async scanForXIAO(timeoutMs = 10000) {
+    console.log('🔍 Scanning for XIAO devices (legacy method)...');
+    const devices = await this.scanForAudioDevices(timeoutMs);
+    const xiaoDevice = devices.find(d => d.name.toLowerCase().includes('xiao'));
+    if (!xiaoDevice) {
+      throw new Error('XIAO device not found');
+    }
+    return xiaoDevice;
   }
 
   async connectToDevice(deviceId) {
@@ -137,11 +160,11 @@ export class XiaoBLEManager {
           Array.from(data.slice(0, 10)).map(b => '0x' + b.toString(16).padStart(2, '0')).join(' '));
       }
       
-      // Check for XIAO packet format: 0xAA 0x55 header
+      // Check for fragmented packet format: 0xAA 0x55 header (XIAO and similar devices)
       if (data.length >= 4 && data[0] === 0xAA && data[1] === 0x55) {
         this.handleFragmentedPacket(data);
       } else {
-        // Direct ADPCM data
+        // Direct audio data (for devices that don't use fragmentation)
         this.processAudioData(data);
       }
       

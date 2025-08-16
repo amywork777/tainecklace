@@ -20,7 +20,7 @@ import {
   Share,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { XiaoBLEManager } from '../services/bleManager';
+import { GenericBLEManager } from '../services/bleManager';
 import { TranscriptionService } from '../services/TranscriptionService';
 import { BackgroundTaskManager } from '../services/BackgroundTaskManager';
 import { HybridStorageService } from '../services/HybridStorageService';
@@ -220,7 +220,7 @@ export default function NotesScreen() {
       
       // Initialize BLE Manager if not already done
       if (!bleManager.current) {
-        bleManager.current = new XiaoBLEManager();
+        bleManager.current = new GenericBLEManager();
         await bleManager.current.initialize();
       }
       

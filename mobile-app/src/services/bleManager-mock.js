@@ -4,7 +4,7 @@
  */
 import { ADPCMDecoder } from './ADPCMDecoder';
 
-export class XiaoBLEManager {
+export class GenericBLEManager {
   constructor() {
     this.device = null;
     this.isConnected = false;

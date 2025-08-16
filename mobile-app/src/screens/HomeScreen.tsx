@@ -26,6 +26,10 @@ export default function HomeScreen({ navigation }) {
   const [isConnected, setIsConnected] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
   const [isDisconnecting, setIsDisconnecting] = useState(false);
+  const [isScanning, setIsScanning] = useState(false);
+  const [discoveredDevices, setDiscoveredDevices] = useState([]);
+  const [selectedDevice, setSelectedDevice] = useState(null);
+  const [showDeviceList, setShowDeviceList] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [stats, setStats] = useState({
@@ -155,6 +159,74 @@ export default function HomeScreen({ navigation }) {
     }
   };
 
+  const handleScanDevices = async () => {
+    if (isScanning) return;
+    
+    try {
+      setIsScanning(true);
+      setStatus('Initializing Bluetooth...');
+      
+      await requestPermissions();
+      
+      if (!bleManager.current) {
+        bleManager.current = new GenericBLEManager();
+        await bleManager.current.initialize();
+      }
+      
+      setStatus('Scanning for BLE devices...');
+      const devices = await bleManager.current.scanForAudioDevices(10000);
+      
+      setDiscoveredDevices(devices);
+      setShowDeviceList(true);
+      setStatus(`Found ${devices.length} devices`);
+      
+    } catch (error) {
+      console.error('Scan error:', error);
+      Alert.alert('Scan Error', error.message);
+      setStatus('Scan failed');
+    } finally {
+      setIsScanning(false);
+    }
+  };
+
+  const handleConnectToSelectedDevice = async () => {
+    if (!selectedDevice || isConnecting) return;
+    
+    try {
+      setIsConnecting(true);
+      setStatus(`Connecting to ${selectedDevice.name}...`);
+      
+      if (!bleManager.current) {
+        bleManager.current = new GenericBLEManager();
+        await bleManager.current.initialize();
+      }
+      
+      bleManager.current.setCallbacks({
+        onAudioData: handleAudioData,
+        onDisconnected: handleDisconnection,
+      });
+      
+      await bleManager.current.connectToDevice(selectedDevice.id);
+      await bleManager.current.startAudioStreaming();
+      
+      setIsConnected(true);
+      setStatus(`Connected to ${selectedDevice.name}`);
+      
+      statsInterval.current = setInterval(() => {
+        if (bleManager.current) {
+          setStats(bleManager.current.getStats());
+        }
+      }, 500);
+      
+    } catch (error) {
+      console.error('Connection error:', error);
+      Alert.alert('Connection Error', error.message);
+      setStatus(`Connection failed: ${error.message}`);
+    } finally {
+      setIsConnecting(false);
+    }
+  };
+
   const handleConnectXIAO = async () => {
     if (isConnecting || isConnected) return;
     
@@ -167,7 +239,7 @@ export default function HomeScreen({ navigation }) {
       
       // Initialize BLE Manager if not already done
       if (!bleManager.current) {
-        bleManager.current = new XiaoBLEManager();
+        bleManager.current = new GenericBLEManager();
         await bleManager.current.initialize();
       }
       
@@ -204,7 +276,7 @@ export default function HomeScreen({ navigation }) {
     }
   };
 
-  const handleDisconnectXIAO = async () => {
+  const handleDisconnectDevice = async () => {
     if (isDisconnecting || !isConnected) return;
     
     try {
@@ -326,13 +398,13 @@ export default function HomeScreen({ navigation }) {
       if (audioBuffer.current.length === 0) {
         console.log('❌ No audio data in buffer during recording period');
         Alert.alert('Error', 'No audio data recorded. Check XIAO connection and ensure it\'s streaming audio.');
-        setStatus('Connected to XIAO');
+        setStatus(`Connected to ${selectedDevice?.name || 'device'}`);
         return;
       }
       
       if (!transcriptionService.current) {
         Alert.alert('Error', 'Please set AssemblyAI API key first');
-        setStatus('Connected to XIAO');
+        setStatus(`Connected to ${selectedDevice?.name || 'device'}`);
         return;
       }
       
@@ -566,19 +638,52 @@ export default function HomeScreen({ navigation }) {
           </View>
           
           {!isConnected ? (
-            <TouchableOpacity 
-              style={[styles.connectButton, (isConnecting) && styles.disabledButton]} 
-              onPress={handleConnectXIAO}
-              disabled={isConnecting}
-            >
-              <Text style={styles.buttonText}>
-                {isConnecting ? '🔄 Connecting...' : 'Connect to XIAO'}
-              </Text>
-            </TouchableOpacity>
+            <View>
+              <TouchableOpacity 
+                style={[styles.scanButton, isScanning && styles.disabledButton]} 
+                onPress={handleScanDevices}
+                disabled={isScanning || isConnecting}
+              >
+                <Text style={styles.buttonText}>
+                  {isScanning ? '🔄 Scanning...' : '🔍 Scan for Devices'}
+                </Text>
+              </TouchableOpacity>
+              
+              {discoveredDevices.length > 0 && (
+                <View style={styles.deviceList}>
+                  <Text style={styles.deviceListTitle}>Found Devices:</Text>
+                  {discoveredDevices.map((device, index) => (
+                    <TouchableOpacity 
+                      key={device.id}
+                      style={[
+                        styles.deviceItem,
+                        selectedDevice?.id === device.id && styles.selectedDevice
+                      ]}
+                      onPress={() => setSelectedDevice(device)}
+                    >
+                      <Text style={styles.deviceName}>{device.name}</Text>
+                      <Text style={styles.deviceId}>RSSI: {device.rssi}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              )}
+              
+              {selectedDevice && (
+                <TouchableOpacity 
+                  style={[styles.connectButton, isConnecting && styles.disabledButton]} 
+                  onPress={handleConnectToSelectedDevice}
+                  disabled={isConnecting}
+                >
+                  <Text style={styles.buttonText}>
+                    {isConnecting ? '🔄 Connecting...' : `Connect to ${selectedDevice.name}`}
+                  </Text>
+                </TouchableOpacity>
+              )}
+            </View>
           ) : (
             <TouchableOpacity 
               style={[styles.connectButton, { backgroundColor: '#dc3545' }, isDisconnecting && styles.disabledButton]} 
-              onPress={handleDisconnectXIAO}
+              onPress={handleDisconnectDevice}
               disabled={isDisconnecting}
             >
               <Text style={styles.buttonText}>
@@ -1075,5 +1180,43 @@ const styles = StyleSheet.create({
     fontStyle: 'italic',
     textAlign: 'center',
     marginTop: 4,
+  },
+  scanButton: {
+    backgroundColor: '#17a2b8',
+    padding: 12,
+    borderRadius: 4,
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  deviceList: {
+    marginBottom: 12,
+  },
+  deviceListTitle: {
+    color: '#ffffff',
+    fontSize: 14,
+    fontWeight: 'bold',
+    marginBottom: 8,
+  },
+  deviceItem: {
+    backgroundColor: '#1a1a1a',
+    borderWidth: 1,
+    borderColor: '#444',
+    borderRadius: 4,
+    padding: 10,
+    marginBottom: 6,
+  },
+  selectedDevice: {
+    borderColor: '#007bff',
+    backgroundColor: '#1a2332',
+  },
+  deviceName: {
+    color: '#ffffff',
+    fontSize: 14,
+    fontWeight: 'bold',
+  },
+  deviceId: {
+    color: '#888',
+    fontSize: 12,
+    marginTop: 2,
   },
 });
