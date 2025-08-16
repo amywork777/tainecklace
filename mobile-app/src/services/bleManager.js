@@ -102,7 +102,7 @@ export class GenericBLEManager {
       
       // Wait for connection to stabilize (critical for Nicla Voice)
       console.log('⏳ Allowing connection to stabilize...');
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      await new Promise(resolve => setTimeout(resolve, 100));
       
       // Check if still connected after stabilization
       const isStillConnected = await this.device.isConnected();
@@ -115,7 +115,7 @@ export class GenericBLEManager {
       console.log('✅ Services and characteristics discovered');
       
       // Another stabilization delay before marking as connected
-      await new Promise(resolve => setTimeout(resolve, 500));
+      await new Promise(resolve => setTimeout(resolve, 100));
       
       this.isConnected = true;
       
@@ -148,7 +148,7 @@ export class GenericBLEManager {
     try {
       // Wait a moment before starting monitoring (critical for stability)
       console.log('⏳ Preparing for audio streaming...');
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      await new Promise(resolve => setTimeout(resolve, 100));
       
       // Verify device is still connected before monitoring
       const isStillConnected = await this.device.isConnected();
